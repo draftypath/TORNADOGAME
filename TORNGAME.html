@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escape the Sundering</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            font-family: 'Times New Roman', serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #d4af37;
+            overflow: hidden;
+        }
+        
+        #game-container {
+            position: relative;
+            width: 1000px;
+            height: 600px;
+        }
+        
+        canvas {
+            border: 3px solid #8B4513;
+            box-shadow: 0 0 20px rgba(212, 175, 55, 0.5);
+            background-color: #2d2d2d;
+        }
+        
+        #game-over, #win-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border: 2px solid #d4af37;
+            text-align: center;
+            display: none;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+        }
+        
+        #game-over.show, #win-screen.show {
+            display: block;
+            opacity: 1;
+        }
+        
+        #retry-button, #win-retry-button {
+            background-color: #8B4513;
+            color: #d4af37;
+            border: 2px solid #d4af37;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+            font-family: 'Times New Roman', serif;
+        }
+        
+        #retry-button:hover, #win-retry-button:hover {
+            background-color: #6a3410;
+        }
+        
+        h2 {
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="1000" height="600"></canvas>
+        <div id="game-over">
+            <h2>Game Over</h2>
+            <p>Your score: <span id="final-score">0</span></p>
+            <button id="retry-button">Retry</button>
+        </div>
+        <div id="win-screen">
+            <h2>You Win!</h2>
+            <p>Your score: <span id="win-score">0</span></p>
+            <button id="win-retry-button">Play Again</button>
+        </div>
+    </div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        
+        const INVISIBLE_FLOOR = canvas.height - 40;
+        
+        // Camera variables
+        let cameraY = 0;
+        const CAMERA_THRESHOLD = canvas.height / 2 - 100;
+        
+        // Image definitions
+        const fixedBackgroundImage = { src: 'backgroundsky.png', loaded: false, width: 1000, height: 600 };
+        const mountainImage1 = { src: 'MOUNTAIN1.png', loaded: false, scaledWidth: 0, scaledHeight: 0, x: 0, speedFactor: 0.15, scale: 1.5, yOffset: -50 };
+        const mountainImage2 = { src: 'MOUNTAIN2.png', loaded: false, scaledWidth: 0, scaledHeight: 0, x: 0, speedFactor: 0.25, scale: 1.0, yOffset: 0 };
+        const hillsideImage1 = { src: 'HILL1.png', loaded: false, scaledWidth: 0, scaledHeight: 0, x: 0, speedFactor: 0.5, scale: 0.8, yOffset: 0 };
+        const hillsideImage2 = { src: 'HILL2.png', loaded: false, scaledWidth: 0, scaledHeight: 0, x: 0, speedFactor: 0.5, scale: 0.8, yOffset: 0 };
+        const groundImage = { src: 'ground.png', loaded: false, scaledWidth: 0, scaledHeight: 0, x: 0, speedFactor: 0.75, scale: 1.0, yOffset: 0 };
+        const burningImages = [
+            { src: 'BURNING1.png', loaded: false, scaledWidth: 0, scaledHeight: 0, speed: 2.0, scale: 0.75, yOffset: 86.0 },
+            { src: 'BURNING2.png', loaded: false, scaledWidth: 0, scaledHeight: 0, speed: 2.0, scale: 0.75, yOffset: 86.0 },
+            { src: 'BURNING3.png', loaded: false, scaledWidth: 0, scaledHeight: 0, speed: 2.0, scale: 0.75, yOffset: 86.0 },
+            { src: 'BURNING4.png', loaded: false, scaledWidth: 0, scaledHeight: 0, speed: 2.0, scale: 0.75, yOffset: 86.0 }
+        ];
+        const playerImage = { src: 'CHARACTER.png', loaded: false };
+        const jumpImage = { src: 'jump.png', loaded: false };
+        const obstacleImages = [
+            { src: 'TRAP.png', loaded: false, scaledWidth: 0, scaledHeight: 0 }
+        ];
+        const platformImage = { src: 'PLATFORM.png', loaded: false, scaledWidth: 0, scaledHeight: 0, scale: 1.0 };
+        const tokenImage = { src: 'TOKEN.png', loaded: false, scaledWidth: 0, scaledHeight: 0, scale: 1.0 };
+        
+        let imagesProcessed = 0;
+        let hillsideX = 0;
+        let groundX = 0;
+        let mountainX1 = 0;
+        let mountainX2 = 0;
+        let burningX = canvas.width;
+        let burningIndex = 0;
+        let gameTime = 0;
+        const SPEED_INCREMENT = 0.002;
+        const MAX_SPEED = 15.0;
+        let difficultyMultiplier = 1.0;
+        
+        const TOTAL_IMAGES = 14;
+        
+        // Starfield cache with twinkling effect
+        const stars = [];
+        for (let i = 0; i < 150; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * (canvas.height * 0.7),
+                size: Math.random() * 2 + 1,
+                opacity: Math.random() * 0.5 + 0.5,
+                twinkleSpeed: Math.random() * 0.05 + 0.02
+            });
+        }
+        
+        // Sky canvas cache with dark gradient
+        const skyCanvas = document.createElement('canvas');
+        skyCanvas.width = canvas.width;
+        skyCanvas.height = canvas.height * 2;
+        const skyCtx = skyCanvas.getContext('2d');
+        const gradient = skyCtx.createLinearGradient(0, -canvas.height, 0, canvas.height);
+        gradient.addColorStop(0, '#0A0A1A');
+        gradient.addColorStop(0.7, '#1C2526');
+        gradient.addColorStop(1, '#0A0A1A');
+        skyCtx.fillStyle = gradient;
+        skyCtx.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
+        
+        // FPS counter
+        let frameCount = 0;
+        let lastFPSTime = performance.now();
+        let fps = 0;
+        let lastTime = performance.now();
+        
+        const loadImage = (imgObj) => {
+            imgObj.image = new Image();
+            imgObj.image.onload = () => {
+                imgObj.loaded = true;
+                if (imgObj.scale) {
+                    imgObj.scaledWidth = imgObj.image.width * imgObj.scale;
+                    imgObj.scaledHeight = imgObj.image.height * imgObj.scale;
+                } else if (imgObj.width) {
+                    imgObj.scaledWidth = imgObj.width;
+                    imgObj.scaledHeight = imgObj.height;
+                }
+                imagesProcessed++;
+                if (imagesProcessed === TOTAL_IMAGES) {
+                    startGame();
+                }
+            };
+            imgObj.image.onerror = () => {
+                console.error(`Failed to load image: ${imgObj.src}`);
+                imgObj.loaded = false;
+                imagesProcessed++;
+                if (imagesProcessed === TOTAL_IMAGES) {
+                    startGame();
+                }
+            };
+            imgObj.image.src = imgObj.src;
+        };
+        
+        [fixedBackgroundImage, mountainImage1, mountainImage2, hillsideImage1, hillsideImage2, groundImage, ...burningImages, playerImage, jumpImage, ...obstacleImages, platformImage, tokenImage].forEach(loadImage);
+        
+        const GRAVITY = 0.5;
+        const JUMP_FORCE = -10;
+        const HOLD_JUMP_GRAVITY = 0.2;
+        const MAX_HOLD_TIME = 30;
+        const TARGET_SCORE = 5000;
+        const PASSIVE_SCORE_RATE = 0.2;
+        const TOKEN_SCORE = 100;
+        
+        let gameOver = false;
+        let gameWon = false;
+        let score = 0;
+        let tokensCollected = 0;
+        let highScore = localStorage.getItem('highScore') || 0;
+        
+        const player = {
+            x: 100,
+            y: INVISIBLE_FLOOR - 120,
+            width: 100,
+            height: 120,
+            velocityY: 0,
+            jumping: false,
+            doubleJumped: false,
+            holdingJump: false,
+            holdTime: 0
+        };
+        
+        let obstacles = [];
+        let platforms = [];
+        let tokens = [];
+        let nextObstacleSpawn = 60;
+        let nextPlatformSpawn = 120;
+        let nextTokenSpawn = 180;
+        
+        const keys = {};
+        
+        window.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+            if (e.code === 'Space' && !e.repeat) {
+                if (!player.jumping) {
+                    player.velocityY = JUMP_FORCE;
+                    player.jumping = true;
+                    player.holdingJump = true;
+                    player.holdTime = 0;
+                } else if (!player.doubleJumped) {
+                    player.velocityY = JUMP_FORCE;
+                    player.doubleJumped = true;
+                    player.holdingJump = true;
+                    player.holdTime = 0;
+                }
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+            if (e.code === 'Space') player.holdingJump = false;
+        });
+        
+        document.getElementById('retry-button').addEventListener('click', resetGame);
+        document.getElementById('win-retry-button').addEventListener('click', resetGame);
+        
+        function resetGame() {
+            gameOver = false;
+            gameWon = false;
+            score = 0;
+            tokensCollected = 0;
+            hillsideX = 0;
+            groundX = 0;
+            mountainX1 = 0;
+            mountainX2 = 0;
+            burningX = canvas.width;
+            burningIndex = 0;
+            gameTime = 0;
+            difficultyMultiplier = 1.0;
+            burningImages.forEach(img => img.speed = 2.0);
+            obstacles = [];
+            platforms = [];
+            tokens = [];
+            nextObstacleSpawn = 60;
+            nextPlatformSpawn = 120;
+            nextTokenSpawn = 180;
+            
+            document.getElementById('game-over').classList.remove('show');
+            document.getElementById('win-screen').classList.remove('show');
+            setTimeout(() => {
+                document.getElementById('game-over').style.display = 'none';
+                document.getElementById('win-screen').style.display = 'none';
+            }, 500);
+            
+            player.x = 100;
+            player.y = INVISIBLE_FLOOR - player.height;
+            player.velocityY = 0;
+            player.jumping = false;
+            player.doubleJumped = false;
+            player.holdingJump = false;
+            player.holdTime = 0;
+            
+            cameraY = 0;
+        }
+        
+        function updatePlayer(deltaTime) {
+            const gravity = (player.holdingJump && player.holdTime < MAX_HOLD_TIME) ? HOLD_JUMP_GRAVITY : GRAVITY;
+            player.velocityY += gravity * deltaTime;
+            if (player.holdingJump) player.holdTime += deltaTime;
+            player.y += player.velocityY * deltaTime;
+            
+            checkPlatformCollisions();
+            checkTokenCollisions();
+            
+            if (player.y + player.height > INVISIBLE_FLOOR) {
+                player.y = INVISIBLE_FLOOR - player.height;
+                player.velocityY = 0;
+                player.jumping = false;
+                player.doubleJumped = false;
+            }
+        }
+        
+        function updateCamera() {
+            cameraY = Math.max(0, CAMERA_THRESHOLD - player.y);
+        }
+        
+        function spawnObstacle() {
+            const obstacle = {
+                x: canvas.width + 50,
+                y: INVISIBLE_FLOOR - 40,
+                width: 80,
+                height: 40,
+                speed: burningImages[0].speed * difficultyMultiplier
+            };
+            obstacles.push(obstacle);
+        }
+        
+        function spawnPlatform() {
+            const platform = {
+                x: canvas.width + 50,
+                y: 200 + Math.random() * 200,
+                width: 150,
+                height: 30,
+                speed: burningImages[0].speed * difficultyMultiplier
+            };
+            platforms.push(platform);
+            
+            if (Math.random() < 0.5) {
+                const token = {
+                    x: platform.x + platform.width / 2 - 45,
+                    y: platform.y - player.height,
+                    radius: 45,
+                    speed: platform.speed
+                };
+                tokens.push(token);
+            }
+        }
+        
+        function spawnToken() {
+            const token = {
+                x: canvas.width + 50,
+                y: 150 + Math.random() * 250,
+                radius: 45,
+                speed: burningImages[0].speed * difficultyMultiplier
+            };
+            tokens.push(token);
+        }
+        
+        function updateObstacles(deltaTime) {
+            if (gameTime >= nextObstacleSpawn && !gameOver && !gameWon) {
+                spawnObstacle();
+                nextObstacleSpawn = gameTime + Math.random() * 240 + 120;
+            }
+            
+            if (gameTime >= nextPlatformSpawn && !gameOver && !gameWon) {
+                spawnPlatform();
+                nextPlatformSpawn = gameTime + Math.random() * 300 + 180;
+            }
+            
+            if (gameTime >= nextTokenSpawn && !gameOver && !gameWon) {
+                spawnToken();
+                nextTokenSpawn = gameTime + Math.random() * 360 + 180;
+            }
+            
+            obstacles.forEach(obstacle => {
+                obstacle.x -= burningImages[0].speed * difficultyMultiplier * deltaTime;
+            });
+            
+            platforms.forEach(platform => {
+                platform.x -= burningImages[0].speed * difficultyMultiplier * deltaTime;
+            });
+            
+            tokens.forEach(token => {
+                token.x -= burningImages[0].speed * difficultyMultiplier * deltaTime;
+            });
+            
+            obstacles = obstacles.filter(obstacle => obstacle.x + obstacle.width > -50);
+            platforms = platforms.filter(platform => platform.x + platform.width > -50);
+            tokens = tokens.filter(token => token.x + token.radius * 2 > -50);
+        }
+        
+        function checkPlatformCollisions() {
+            if (player.velocityY <= 0) return;
+            
+            platforms.forEach(platform => {
+                const capsuleRadius = player.width / 2;
+                const capsuleHeight = player.height - player.width;
+                const capsuleTop = player.y + capsuleRadius;
+                const capsuleBottom = player.y + capsuleHeight + capsuleRadius;
+                const capsuleX = player.x + capsuleRadius;
+
+                const rectLeft = platform.x;
+                const rectRight = platform.x + platform.width;
+                const rectTop = platform.y;
+                const rectBottom = platform.y + platform.height;
+
+                let closestX, closestY;
+                if (capsuleX < rectLeft) closestX = rectLeft;
+                else if (capsuleX > rectRight) closestX = rectRight;
+                else closestX = capsuleX;
+
+                if (capsuleTop > capsuleBottom) {
+                    const temp = capsuleTop;
+                    capsuleTop = capsuleBottom;
+                    capsuleBottom = temp;
+                }
+
+                if (closestX === capsuleX) {
+                    if (capsuleTop > rectBottom) closestY = rectBottom;
+                    else if (capsuleBottom < rectTop) closestY = rectTop;
+                    else closestY = Math.max(capsuleTop, Math.min(capsuleBottom, rectTop));
+                } else {
+                    closestY = Math.max(capsuleTop, Math.min(capsuleBottom, rectTop));
+                    if (closestY < rectTop) closestY = rectTop;
+                    if (closestY > rectBottom) closestY = rectBottom;
+                }
+
+                let distance;
+                if (closestY <= capsuleTop) {
+                    distance = Math.sqrt((capsuleX - closestX) ** 2 + (capsuleTop - closestY) ** 2);
+                } else if (closestY >= capsuleBottom) {
+                    distance = Math.sqrt((capsuleX - closestX) ** 2 + (capsuleBottom - closestY) ** 2);
+                } else {
+                    distance = Math.abs(capsuleX - closestX);
+                }
+
+                if (distance < capsuleRadius) {
+                    player.y = platform.y - player.height;
+                    player.velocityY = 0;
+                    player.jumping = false;
+                    player.doubleJumped = false;
+                }
+            });
+        }
+        
+        function checkTokenCollisions() {
+            tokens = tokens.filter(token => {
+                const playerRadius = player.width / 2;
+                const playerCenterX = player.x + playerRadius;
+                const playerCenterY = player.y + player.height / 2;
+                const tokenCenterX = token.x + token.radius;
+                const tokenCenterY = token.y + token.radius;
+                
+                const distance = Math.sqrt((playerCenterX - tokenCenterX) ** 2 + (playerCenterY - tokenCenterY) ** 2);
+                
+                if (distance < playerRadius + token.radius) {
+                    score += TOKEN_SCORE;
+                    tokensCollected++;
+                    return false;
+                }
+                return true;
+            });
+        }
+        
+        function checkCollisions() {
+            obstacles.forEach(obstacle => {
+                const capsuleRadius = player.width / 2;
+                const capsuleHeight = player.height - player.width;
+                const capsuleTop = player.y + capsuleRadius;
+                const capsuleBottom = player.y + capsuleHeight + capsuleRadius;
+                const capsuleX = player.x + capsuleRadius;
+
+                const rectLeft = obstacle.x;
+                const rectRight = obstacle.x + obstacle.width;
+                const rectTop = obstacle.y;
+                const rectBottom = obstacle.y + obstacle.height;
+
+                let closestX, closestY;
+                if (capsuleX < rectLeft) closestY = rectLeft;
+                else if (capsuleX > rectRight) closestX = rectRight;
+                else closestX = capsuleX;
+
+                if (capsuleTop > capsuleBottom) {
+                    const temp = capsuleTop;
+                    capsuleTop = capsuleBottom;
+                    capsuleBottom = temp;
+                }
+
+                if (closestX === capsuleX) {
+                    if (capsuleTop > rectBottom) closestY = rectBottom;
+                    else if (capsuleBottom < rectTop) closestY = rectTop;
+                    else closestY = Math.max(capsuleTop, Math.min(capsuleBottom, rectTop));
+                } else {
+                    closestY = Math.max(capsuleTop, Math.min(capsuleBottom, rectTop));
+                    if (closestY < rectTop) closestY = rectTop;
+                    if (closestY > rectBottom) closestY = rectBottom;
+                }
+
+                let distance;
+                if (closestY <= capsuleTop) {
+                    distance = Math.sqrt((capsuleX - closestX) ** 2 + (capsuleTop - closestY) ** 2);
+                } else if (closestY >= capsuleBottom) {
+                    distance = Math.sqrt((capsuleX - closestX) ** 2 + (capsuleBottom - closestY) ** 2);
+                } else {
+                    distance = Math.abs(capsuleX - closestX);
+                }
+
+                if (distance < capsuleRadius) {
+                    gameOver = true;
+                    document.getElementById('final-score').textContent = Math.floor(score);
+                    document.getElementById('game-over').style.display = 'block';
+                    setTimeout(() => document.getElementById('game-over').classList.add('show'), 10);
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem('highScore', highScore);
+                    }
+                }
+            });
+        }
+        
+        function drawBackground() {
+            const mainSpeed = burningImages[0].speed * difficultyMultiplier;
+            const spacing = burningImages[0].scaledWidth * (2 + Math.min(2, (burningImages[0].speed - 2) / (MAX_SPEED - 2) * 2));
+            const totalWidth = burningImages[0].scaledWidth + spacing;
+
+            if (fixedBackgroundImage.loaded) {
+                ctx.drawImage(fixedBackgroundImage.image, 0, 0, fixedBackgroundImage.width, fixedBackgroundImage.height);
+            } else {
+                ctx.fillStyle = '#0A0A1A';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            ctx.drawImage(skyCanvas, 0, -canvas.height - cameraY);
+            ctx.save();
+            ctx.translate(0, -canvas.height - cameraY);
+            stars.forEach(star => {
+                const twinkle = Math.sin(gameTime * star.twinkleSpeed) * 0.3 + 0.7;
+                ctx.fillStyle = `rgba(255, 255, 255, ${star.opacity * twinkle})`;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            });
+            ctx.restore();
+            
+            [mountainImage1, mountainImage2].forEach(mountain => {
+                if (mountain.loaded && mountain.scaledWidth > 0) {
+                    let startX = ((mountain.x % mountain.scaledWidth) + mountain.scaledWidth) % mountain.scaledWidth - mountain.scaledWidth;
+                    let currentX = startX;
+                    while (currentX < canvas.width + mountain.scaledWidth) {
+                        const yPos = canvas.height - mountain.scaledHeight + mountain.yOffset;
+                        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                        ctx.shadowBlur = 5;
+                        ctx.shadowOffsetX = 5;
+                        ctx.shadowOffsetY = 5;
+                        ctx.drawImage(mountain.image, currentX, yPos, mountain.scaledWidth, mountain.scaledHeight);
+                        ctx.shadowBlur = 0;
+                        ctx.shadowOffsetX = 0;
+                        ctx.shadowOffsetY = 0;
+                        currentX += mountain.scaledWidth;
+                    }
+                    mountain.x -= mainSpeed * mountain.speedFactor;
+                }
+            });
+            
+            if (hillsideImage1.loaded && hillsideImage2.loaded && hillsideImage1.scaledWidth > 0) {
+                let startX = ((hillsideX % (hillsideImage1.scaledWidth + hillsideImage2.scaledWidth)) + 
+                             (hillsideImage1.scaledWidth + hillsideImage2.scaledWidth)) % 
+                             (hillsideImage1.scaledWidth + hillsideImage2.scaledWidth) - (hillsideImage1.scaledWidth + hillsideImage2.scaledWidth);
+                let currentX = startX;
+                while (currentX < canvas.width + (hillsideImage1.scaledWidth + hillsideImage2.scaledWidth)) {
+                    const yPos1 = canvas.height - hillsideImage1.scaledHeight + hillsideImage1.yOffset;
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetX = 5;
+                    ctx.shadowOffsetY = 5;
+                    ctx.drawImage(hillsideImage1.image, currentX, yPos1, hillsideImage1.scaledWidth, hillsideImage1.scaledHeight);
+                    ctx.drawImage(hillsideImage2.image, currentX + hillsideImage1.scaledWidth, yPos1, hillsideImage2.scaledWidth, hillsideImage2.scaledHeight);
+                    ctx.shadowBlur = 0;
+                    ctx.shadowOffsetX = 0;
+                    ctx.shadowOffsetY = 0;
+                    currentX += (hillsideImage1.scaledWidth + hillsideImage2.scaledWidth);
+                }
+                hillsideX -= mainSpeed * hillsideImage1.speedFactor;
+            }
+            
+            if (groundImage.loaded && groundImage.scaledWidth > 0) {
+                let startX = ((groundX % groundImage.scaledWidth) + groundImage.scaledWidth) % groundImage.scaledWidth - groundImage.scaledWidth;
+                let currentX = startX;
+                ctx.filter = 'brightness(0.25)';
+                while (currentX < canvas.width + groundImage.scaledWidth) {
+                    const yPos = INVISIBLE_FLOOR - 40 + 30;
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetX = 5;
+                    ctx.shadowOffsetY = 5;
+                    ctx.drawImage(groundImage.image, currentX, yPos, groundImage.scaledWidth, groundImage.scaledHeight);
+                    currentX += groundImage.scaledWidth;
+                }
+                ctx.filter = 'none';
+                ctx.shadowBlur = 0;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+                groundX -= mainSpeed * groundImage.speedFactor;
+            }
+            
+            platforms.forEach(platform => {
+                if (platformImage.loaded) {
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetX = 5;
+                    ctx.shadowOffsetY = 5;
+                    ctx.drawImage(platformImage.image, platform.x, platform.y, platform.width, platform.height);
+                    ctx.shadowBlur = 0;
+                    ctx.shadowOffsetX = 0;
+                    ctx.shadowOffsetY = 0;
+                } else {
+                    ctx.fillStyle = 'rgba(100, 100, 255, 0.8)';
+                    ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+                }
+                ctx.fillStyle = 'rgba(0, 0, 255, 0.3)';
+                ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+            });
+            
+            if (burningImages.every(img => img.loaded && img.scaledWidth > 0)) {
+                let currentX = burningX;
+                let tempIndex = burningIndex;
+                
+                while (currentX > -totalWidth) {
+                    const burning = burningImages[(tempIndex + 4) % 4];
+                    const yPos = INVISIBLE_FLOOR - burning.scaledHeight + burning.yOffset;
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetX = 5;
+                    ctx.shadowOffsetY = 5;
+                    ctx.drawImage(burning.image, currentX, yPos, burning.scaledWidth, burning.scaledHeight);
+                    ctx.shadowBlur = 0;
+                    ctx.shadowOffsetX = 0;
+                    ctx.shadowOffsetY = 0;
+                    currentX -= totalWidth;
+                    tempIndex = (tempIndex - 1 + 4) % 4;
+                }
+                
+                currentX = burningX;
+                tempIndex = burningIndex;
+                while (currentX < canvas.width + totalWidth) {
+                    const burning = burningImages[tempIndex];
+                    const yPos = INVISIBLE_FLOOR - burning.scaledHeight + burning.yOffset;
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetX = 5;
+                    ctx.shadowOffsetY = 5;
+                    ctx.drawImage(burning.image, currentX, yPos, burning.scaledWidth, burning.scaledHeight);
+                    ctx.shadowBlur = 0;
+                    ctx.shadowOffsetX = 0;
+                    ctx.shadowOffsetY = 0;
+                    currentX += totalWidth;
+                    tempIndex = (tempIndex + 1) % 4;
+                }
+            }
+        }
+        
+        function drawObstacles() {
+            obstacles.forEach(obstacle => {
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                
+                const img = obstacleImages[0];
+                if (img.loaded) {
+                    const visualScale = 1.8;
+                    const trapWidth = obstacle.width * visualScale;
+                    const trapHeight = obstacle.height * visualScale;
+                    const trapX = obstacle.x + (obstacle.width - trapWidth) / 2;
+                    const trapY = obstacle.y + (obstacle.height - trapHeight) / 2;
+                    
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetX = 5;
+                    ctx.shadowOffsetY = 5;
+                    ctx.drawImage(img.image, trapX, trapY, trapWidth, trapHeight);
+                    ctx.shadowBlur = 0;
+                    ctx.shadowOffsetX = 0;
+                    ctx.shadowOffsetY = 0;
+                }
+            });
+        }
+        
+        function drawGameElements() {
+            tokens.forEach(token => {
+                if (tokenImage.loaded) {
+                    ctx.save();
+                    const tokenWidth = token.radius * 2 * 1.5;
+                    const tokenHeight = token.radius * 2;
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetX = 5;
+                    ctx.shadowOffsetY = 5;
+                    ctx.drawImage(tokenImage.image, token.x, token.y, tokenWidth, tokenHeight);
+                    ctx.restore();
+                } else {
+                    ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';
+                    ctx.beginPath();
+                    ctx.arc(token.x + token.radius, token.y + token.radius, token.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.strokeStyle = 'rgba(255, 255, 0, 0.3)';
+                ctx.beginPath();
+                ctx.arc(token.x + token.radius, token.y + token.radius, token.radius, 0, Math.PI * 2);
+                ctx.stroke();
+            });
+            
+            // Commented out hitbox rendering to make it transparent
+            /*
+            const capsuleRadius = player.width / 2;
+            const capsuleHeight = player.height - player.width;
+            const capsuleTop = player.y + capsuleRadius;
+            const capsuleBottom = player.y + capsuleHeight + capsuleRadius;
+            const capsuleX = player.x + capsuleRadius;
+            
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+            ctx.beginPath();
+            ctx.arc(capsuleX, capsuleTop, capsuleRadius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(capsuleX, capsuleBottom, capsuleRadius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillRect(player.x, capsuleTop, player.width, capsuleHeight);
+            */
+            
+            // Player sprite rendering (unchanged)
+            if (player.jumping && jumpImage.loaded) {
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                ctx.shadowBlur = 5;
+                ctx.shadowOffsetX = 5;
+                ctx.shadowOffsetY = 5;
+                ctx.drawImage(jumpImage.image, player.x - 20, player.y - 20, 140, 160);
+                ctx.shadowBlur = 0;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+            } else if (playerImage.loaded) {
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                ctx.shadowBlur = 5;
+                ctx.shadowOffsetX = 5;
+                ctx.shadowOffsetY = 5;
+                ctx.drawImage(playerImage.image, player.x - 20, player.y - 20, 140, 160);
+                ctx.shadowBlur = 0;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+            } else {
+                ctx.fillStyle = '#d4af37';
+                ctx.fillRect(player.x, player.y, player.width, player.height);
+            }
+        }
+        
+        function drawUI() {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.font = '20px "Times New Roman"';
+            ctx.fillStyle = '#d4af37';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Score: ${Math.floor(score)}`, 20, 30);
+            ctx.textAlign = 'right';
+            ctx.fillText(`High Score: ${Math.floor(highScore)}`, canvas.width - 20, 30);
+            ctx.textAlign = 'left';
+            ctx.fillText(`Difficulty: ${difficultyMultiplier.toFixed(1)}x`, 20, 60);
+            ctx.fillText(`Obstacles: ${obstacles.length}`, 20, 90);
+            ctx.fillText(`Platforms: ${platforms.length}`, 20, 120);
+            ctx.fillText(`Tokens: ${tokensCollected}`, 20, 150);
+            ctx.fillText(`Speed: ${burningImages[0].speed.toFixed(2)}`, 20, 180);
+            ctx.fillText(`FPS: ${fps}`, 20, 210);
+        }
+        
+        function gameLoop(currentTime) {
+            if (!gameOver && !gameWon) {
+                const deltaTime = (currentTime - lastTime) / 16.67;
+                lastTime = currentTime;
+
+                gameTime += deltaTime;
+                updatePlayer(deltaTime);
+                updateCamera();
+                score += PASSIVE_SCORE_RATE * deltaTime;
+
+                burningImages.forEach(img => {
+                    img.speed = Math.min(MAX_SPEED, img.speed + SPEED_INCREMENT * deltaTime);
+                });
+                difficultyMultiplier = 1.0 + (gameTime / (60 * 20)) * 0.1;
+                const baseSpeed = burningImages[0].speed;
+                const adjustedSpeed = baseSpeed * difficultyMultiplier;
+                burningX -= adjustedSpeed * deltaTime;
+
+                const spacing = burningImages[0].scaledWidth * (2 + Math.min(2, (burningImages[0].speed - 2) / (MAX_SPEED - 2) * 2));
+                const totalWidth = burningImages[0].scaledWidth + spacing;
+                if (burningX <= canvas.width - totalWidth) {
+                    burningX += totalWidth;
+                    burningIndex = (burningIndex + 1) % 4;
+                }
+
+                if (score >= TARGET_SCORE) {
+                    gameWon = true;
+                    document.getElementById('win-score').textContent = Math.floor(score);
+                    document.getElementById('win-screen').style.display = 'block';
+                    setTimeout(() => document.getElementById('win-screen').classList.add('show'), 10);
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem('highScore', highScore);
+                    }
+                }
+
+                updateObstacles(deltaTime);
+                checkCollisions();
+
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                ctx.save();
+                ctx.translate(0, cameraY);
+
+                drawBackground();
+                drawObstacles();
+                drawGameElements();
+
+                ctx.restore();
+
+                drawUI();
+
+                frameCount++;
+                if (currentTime - lastFPSTime >= 1000) {
+                    fps = frameCount;
+                    frameCount = 0;
+                    lastFPSTime = currentTime;
+                }
+            }
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function startGame() {
+            resetGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        if (!canvas.getContext) {  
+            console.error('Canvas not supported in this browser');
+        }
+    </script>
+</body>
+</html>
